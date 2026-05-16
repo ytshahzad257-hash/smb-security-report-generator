@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Scan" ADD COLUMN     "scanType" TEXT NOT NULL DEFAULT 'PROFESSIONAL';

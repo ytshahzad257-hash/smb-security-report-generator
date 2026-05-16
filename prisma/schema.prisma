@@ -1,0 +1,586 @@
+// Prisma schema for the SMB Security Report Generator database.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  USER
+  AGENCY
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum BillingType {
+  FREE
+  ONE_TIME
+  MONTHLY
+  ADDON
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  CANCELLED
+  PAST_DUE
+}
+
+enum PaymentMethod {
+  STRIPE
+  LEMON
+  PAYPAL
+  BANK_TRANSFER
+  JAZZCASH
+  EASYPAISA
+  MANUAL
+}
+
+enum PaymentProvider {
+  MANUAL
+  STRIPE
+  LEMON
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FAILED
+  REFUNDED
+}
+
+enum ManualPaymentRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ScanStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum FindingSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum ConfidenceLevel {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ReportType {
+  BASIC
+  PROFESSIONAL
+  WHITE_LABEL
+}
+
+enum ReportStatus {
+  GENERATED
+  FAILED
+}
+
+enum ScanLogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+enum EmailStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model User {
+  id           String         @id @default(cuid())
+  name         String?
+  email        String         @unique
+  passwordHash String
+  role         UserRole       @default(USER)
+  status       UserStatus     @default(ACTIVE)
+  stripeCustomerId String?    @unique
+  lemonCustomerId String?     @unique
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  agencyProfile AgencyProfile?
+  subscriptions Subscription[]
+  payments      Payment[]
+  manualPaymentRequests ManualPaymentRequest[] @relation("ManualPaymentRequestUser")
+  reviewedManualPayments ManualPaymentRequest[] @relation("ManualPaymentRequestReviewer")
+  adminAuditLogs AdminAuditLog[] @relation("AdminAuditLogAdmin")
+  targetedAdminAuditLogs AdminAuditLog[] @relation("AdminAuditLogTargetUser")
+  clients       Client[]
+  scans         Scan[]
+  reports       Report[]
+  reportShares  ReportShare[]
+  abuseLogs     AbuseLog[]
+  notifications Notification[]
+  notificationPreference UserNotificationPreference?
+  emailLogs     EmailLog[]
+
+  @@index([email])
+}
+
+model UserNotificationPreference {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  paymentEmails  Boolean  @default(true)
+  scanEmails     Boolean  @default(true)
+  reportEmails   Boolean  @default(true)
+  shareEmails    Boolean  @default(true)
+  inAppNotifications Boolean @default(true)
+  marketingEmails Boolean @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  href      String?
+  readAt    DateTime?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@index([type])
+}
+
+model EmailLog {
+  id                String      @id @default(cuid())
+  userId            String?
+  toEmail           String
+  templateKey       String
+  subject           String
+  status            EmailStatus
+  errorMessage      String?     @db.Text
+  providerMessageId String?
+  dedupeKey         String?     @unique
+  createdAt         DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([templateKey])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AgencyProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  agencyName     String
+  logoUrl        String?
+  logoPath       String?
+  primaryColor   String   @default("#0f172a")
+  secondaryColor String?
+  contactEmail   String?
+  websiteUrl     String?
+  address        String?
+  footerText     String   @default("Prepared for client review")
+  showPoweredBy  Boolean  @default(true)
+  brandColor     String?
+  website        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Plan {
+  id                  String      @id @default(cuid())
+  name                String
+  slug                String      @unique
+  price               Decimal     @db.Decimal(10, 2)
+  currency            String      @default("USD")
+  billingType         BillingType @default(ONE_TIME)
+  allowBasicScan      Boolean     @default(false)
+  allowProfessionalScan Boolean   @default(false)
+  basicScanLimitPerDay Int        @default(0)
+  professionalScanLimitPerDay Int @default(0)
+  allowBasicPdf       Boolean     @default(false)
+  allowProfessionalPdf Boolean    @default(false)
+  basicPdfCredits     Int         @default(0)
+  professionalPdfCredits Int      @default(0)
+  totalReportCredits  Int         @default(0)
+  allowManualReview   Boolean     @default(false)
+  lightManualReviewCredits Int    @default(0)
+  deepManualReviewCredits Int     @default(0)
+  allowPriorityGuidance Boolean   @default(false)
+  allowWhiteLabel     Boolean     @default(false)
+  allowClientManagement Boolean   @default(false)
+  allowShareLinks     Boolean     @default(false)
+  allowHidePoweredBy  Boolean     @default(false)
+  allowAgencyBranding Boolean     @default(false)
+  allowPrioritySupport Boolean    @default(false)
+  preferredPaymentProvider String?
+  stripeEnabled       Boolean     @default(false)
+  reportCredits       Int         @default(0)
+  stripeProductId     String?
+  stripePriceId       String?
+  stripeMode          String?
+  isStripeEnabled     Boolean     @default(false)
+  lemonVariantId      String?
+  lemonProductId      String?
+  lemonEnabled        Boolean     @default(false)
+  whiteLabelEnabled   Boolean     @default(false)
+  clientManagementEnabled Boolean @default(false)
+  shareLinkEnabled    Boolean     @default(false)
+  manualReviewEnabled Boolean     @default(false)
+  isActive            Boolean     @default(true)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  subscriptions Subscription[]
+  payments      Payment[]
+  manualPaymentRequests ManualPaymentRequest[]
+}
+
+model CreditPackage {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  price           Decimal  @db.Decimal(10, 2)
+  currency        String   @default("USD")
+  reportCredits   Int
+  stripeProductId String?
+  stripePriceId   String?
+  isStripeEnabled Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  payments Payment[]
+
+  @@index([isActive])
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  userId             String
+  planId             String
+  status             SubscriptionStatus @default(INACTIVE)
+  provider           PaymentProvider    @default(MANUAL)
+  stripeSubscriptionId String?          @unique
+  stripeCustomerId   String?
+  lemonSubscriptionId String?           @unique
+  lemonCustomerId    String?
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean            @default(false)
+  creditsTotal       Int                @default(0)
+  creditsUsed        Int                @default(0)
+  creditsRemaining   Int                @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@index([userId])
+  @@index([stripeCustomerId])
+  @@index([lemonCustomerId])
+  @@index([status])
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  userId         String
+  planId         String?
+  creditPackageId String?
+  packageName    String?
+  amount         Decimal       @db.Decimal(10, 2)
+  currency       String        @default("USD")
+  provider       PaymentProvider @default(MANUAL)
+  method         PaymentMethod
+  status         PaymentStatus @default(PENDING)
+  reportCredits  Int           @default(0)
+  proofUrl       String?
+  transactionRef String?
+  adminNote      String?
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String?
+  stripeInvoiceId         String? @unique
+  stripeSubscriptionId    String?
+  lemonOrderId            String?
+  lemonCheckoutId         String?
+  lemonSubscriptionId     String?
+  lemonCustomerId         String?
+  lemonVariantId          String?
+  lemonProductId          String?
+  providerEventId         String? @unique
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan? @relation(fields: [planId], references: [id])
+  creditPackage CreditPackage? @relation(fields: [creditPackageId], references: [id])
+
+  @@index([userId])
+  @@index([planId])
+  @@index([creditPackageId])
+  @@index([provider])
+  @@index([status])
+  @@index([stripeSubscriptionId])
+  @@index([lemonSubscriptionId])
+  @@index([lemonCustomerId])
+  @@index([lemonOrderId])
+}
+
+model StripeEvent {
+  id               String    @id @default(cuid())
+  stripeEventId    String    @unique
+  eventType        String
+  processedAt      DateTime?
+  processingStatus String
+  errorMessage     String?   @db.Text
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([eventType])
+  @@index([processingStatus])
+  @@index([createdAt])
+}
+
+model LemonSqueezyEvent {
+  id               String    @id @default(cuid())
+  eventId          String    @unique
+  eventName        String
+  processingStatus String
+  processedAt      DateTime?
+  errorMessage     String?   @db.Text
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([eventName])
+  @@index([processingStatus])
+  @@index([createdAt])
+}
+
+model ManualPaymentRequest {
+  id                   String                     @id @default(cuid())
+  userId               String
+  planId               String?
+  packageName          String
+  amount               Decimal                    @db.Decimal(10, 2)
+  currency             String                     @default("USD")
+  reportCredits        Int                        @default(0)
+  requestedPlanName    String?
+  paymentMethod        String
+  transactionReference String?
+  payerName            String?
+  payerPhone           String?
+  proofUrl             String?
+  proofPath            String?
+  status               ManualPaymentRequestStatus @default(PENDING)
+  adminNote            String?
+  reviewedByAdminId    String?
+  reviewedAt           DateTime?
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+
+  user            User  @relation("ManualPaymentRequestUser", fields: [userId], references: [id], onDelete: Cascade)
+  plan            Plan? @relation(fields: [planId], references: [id])
+  reviewedByAdmin User? @relation("ManualPaymentRequestReviewer", fields: [reviewedByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([planId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AdminAuditLog {
+  id          String   @id @default(cuid())
+  adminUserId String
+  action      String
+  targetUserId String?
+  targetType  String?
+  targetId    String?
+  reason      String?  @db.Text
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  adminUser User  @relation("AdminAuditLogAdmin", fields: [adminUserId], references: [id], onDelete: Cascade)
+  targetUser User? @relation("AdminAuditLogTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([adminUserId])
+  @@index([targetUserId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Scan {
+  id            String     @id @default(cuid())
+  userId        String
+  clientId      String?
+  clientName    String?
+  scanType      String     @default("PROFESSIONAL")
+  targetUrl     String
+  normalizedUrl String
+  rootDomain    String
+  status        ScanStatus @default(PENDING)
+  score         Int?
+  grade         String?
+  errorMessage  String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client   Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  findings Finding[]
+  reports  Report[]
+  logs     ScanLog[]
+
+  @@index([userId])
+  @@index([clientId])
+  @@index([status])
+}
+
+model Finding {
+  id           String          @id @default(cuid())
+  scanId       String
+  title        String
+  severity     FindingSeverity
+  category     String
+  owaspMapping String?
+  evidence     String?         @db.Text
+  impact       String?         @db.Text
+  fix          String?         @db.Text
+  confidence   ConfidenceLevel
+  createdAt    DateTime        @default(now())
+
+  scan Scan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@index([scanId])
+}
+
+model Report {
+  id               String     @id @default(cuid())
+  userId           String
+  scanId           String
+  clientId         String?
+  clientName       String?
+  reportType       ReportType
+  status           ReportStatus @default(GENERATED)
+  pdfUrl           String?
+  filePath         String?
+  publicShareToken String?    @unique
+  generatedAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scan   Scan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  client Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  shares ReportShare[]
+
+  @@index([userId])
+  @@index([scanId])
+  @@index([clientId])
+}
+
+model Client {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  companyName  String?
+  contactEmail String?
+  phone        String?
+  website      String?
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scans        Scan[]
+  reports      Report[]
+  reportShares ReportShare[]
+
+  @@index([userId])
+  @@index([userId, name])
+}
+
+model ReportShare {
+  id             String    @id @default(cuid())
+  userId         String
+  reportId       String
+  clientId       String?
+  token          String    @unique
+  title          String?
+  isActive       Boolean   @default(true)
+  expiresAt      DateTime?
+  passwordHash   String?
+  viewCount      Int       @default(0)
+  lastViewedAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  report Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  client Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([reportId])
+  @@index([clientId])
+  @@index([isActive])
+}
+
+model ScanLog {
+  id        String       @id @default(cuid())
+  scanId    String
+  level     ScanLogLevel
+  message   String       @db.Text
+  metadata  Json?
+  createdAt DateTime     @default(now())
+
+  scan Scan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+}
+
+model AbuseLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  targetUrl String?
+  target    String?
+  reason    String   @db.Text
+  eventType String   @default("SECURITY_EVENT")
+  severity  String   @default("INFO")
+  ipAddress String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([eventType])
+  @@index([severity])
+  @@index([createdAt])
+}
